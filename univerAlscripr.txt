@@ -12,6 +12,7 @@ local aimbotEnabled = false
 local aimbotMethod = "Camera"
 local aimbotMode = "Hold"
 local aimbotSticky = false
+local aimbotTargetPart = "Head"
 local wallCheckEnabled = false
 local aimbotTeamCheck = false
 local aimbotFriendCheck = false
@@ -22,10 +23,20 @@ local fovPosition = "Center"
 local fovFollowTarget = false
 local highlightTarget = false
 local showMobileButton = false
+local dragMobileButton = false
 local isAiming = false
 local aimbotTarget = nil
 local aimbotKeybind = Enum.KeyCode.E
 local aimbotKeyType = "Keyboard"
+
+local triggerbotEnabled = false
+local triggerbotTeamCheck = false
+local triggerbotFriendCheck = false
+
+local autoClickerEnabled = false
+
+local antiAimEnabled = false
+local antiAimMode = "Backwards"
 
 local hitboxEnabled = false
 local hitboxSize = 2
@@ -50,6 +61,10 @@ local bhopEnabled = false
 local noclipEnabled = false
 local noJumpCooldown = false
 
+local dashEnabled = false
+local dashKeybind = Enum.KeyCode.X
+local dashDistance = 20
+
 local espEnabled = false
 local espFont = 0
 local drawingBoxEnabled = false
@@ -59,9 +74,17 @@ local drawingHealthBarEnabled = false
 local drawingNameEnabled = false
 local drawingDisplayNameEnabled = false
 local drawingDistanceEnabled = false
+local drawingTracersEnabled = false
+local tracerOrigin = "Bottom"
+local chamsEnabled = false
 local teamCheckEnabled = false
 local teamColorEnabled = false
 local friendCheckEnabled = false
+
+local crosshairEnabled = false
+local crosshairColor = Color3.fromRGB(255, 255, 255)
+local crosshairSize = 10
+local crosshairThickness = 1
 
 local boxColor = Color3.fromRGB(255, 255, 255)
 local boxFillColor = Color3.fromRGB(255, 255, 255)
@@ -69,13 +92,16 @@ local boxFillTransparency = 0.5
 local nameColor = Color3.fromRGB(255, 255, 255)
 local displayNameColor = Color3.fromRGB(255, 255, 255)
 local distanceColor = Color3.fromRGB(255, 255, 255)
+local tracerColor = Color3.fromRGB(255, 255, 255)
+local chamsFillColor = Color3.fromRGB(255, 0, 0)
+local chamsOutlineColor = Color3.fromRGB(255, 255, 255)
 
 local fullbrightEnabled = false
 local noFogEnabled = false
-local gravityEnabled = false
-local gravityValue = 196.2
 local fovEnabled = false
 local fovValue = 70
+local thirdPersonEnabled = false
+local thirdPersonDistance = 15
 local spinbotEnabled = false
 local spinbotSpeed = 20
 local instantPrompt = false
@@ -105,6 +131,13 @@ local fovCircle = Drawing.new("Circle")
 fovCircle.Thickness = 1
 fovCircle.NumSides = 64
 fovCircle.Filled = false
+
+local crosshairLines = {
+    Top = Drawing.new("Line"),
+    Bottom = Drawing.new("Line"),
+    Left = Drawing.new("Line"),
+    Right = Drawing.new("Line")
+}
 
 local mobileGui = Instance.new("ScreenGui")
 mobileGui.Name = "LawMobileAim"
@@ -142,37 +175,32 @@ local function createEspDrawings(player)
         HealthBarOutline = Drawing.new("Square"),
         Name = Drawing.new("Text"),
         DisplayName = Drawing.new("Text"),
-        Distance = Drawing.new("Text")
+        Distance = Drawing.new("Text"),
+        Tracer = Drawing.new("Line")
     }
     
     structures.Box.Thickness = 1
     structures.Box.Filled = false
-    
     structures.BoxOutline.Thickness = 1
     structures.BoxOutline.Filled = false
     structures.BoxOutline.Color = Color3.fromRGB(0, 0, 0)
-    
     structures.BoxFill.Thickness = 0
     structures.BoxFill.Filled = true
-    
     structures.HealthBar.Thickness = 1
     structures.HealthBar.Filled = true
-    
     structures.HealthBarOutline.Thickness = 1
     structures.HealthBarOutline.Filled = true
     structures.HealthBarOutline.Color = Color3.fromRGB(0, 0, 0)
-    
     structures.Name.Size = 14
     structures.Name.Center = true
     structures.Name.Outline = true
-    
     structures.DisplayName.Size = 14
     structures.DisplayName.Center = true
     structures.DisplayName.Outline = true
-    
     structures.Distance.Size = 14
     structures.Distance.Center = true
     structures.Distance.Outline = true
+    structures.Tracer.Thickness = 1
     
     espCache[player] = structures
 end
@@ -230,21 +258,23 @@ local function getClosestTarget()
     local center = fovPosition == "Center" and camera.ViewportSize / 2 or UserInputService:GetMouseLocation()
     
     for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChildOfClass("Humanoid") and player.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChildOfClass("Humanoid") and player.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
             
+            local targetPart = player.Character:FindFirstChild(aimbotTargetPart) or player.Character:FindFirstChild("HumanoidRootPart")
+            if not targetPart then continue end
+
             if aimbotTeamCheck and player.Team == LocalPlayer.Team then continue end
             
             local isFriend = false
             pcall(function() isFriend = LocalPlayer:IsFriendsWith(player.UserId) end)
             if aimbotFriendCheck and isFriend then continue end
             
-            local part = player.Character.HumanoidRootPart
-            local pos, onScreen = camera:WorldToViewportPoint(part.Position)
+            local pos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
             
             if onScreen then
                 if wallCheckEnabled then
                     local origin = camera.CFrame.Position
-                    local dir = part.Position - origin
+                    local dir = targetPart.Position - origin
                     local raycastParams = RaycastParams.new()
                     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
                     raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, player.Character, camera}
@@ -265,11 +295,20 @@ end
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
+    
     if ctrlClickTpEnabled and input.UserInputType == Enum.UserInputType.MouseButton1 and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
         local mouse = LocalPlayer:GetMouse()
         local character = LocalPlayer.Character
         if character and character:FindFirstChild("HumanoidRootPart") and mouse.Hit then
             character.HumanoidRootPart.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0))
+        end
+    end
+
+    if dashEnabled and input.KeyCode == dashKeybind then
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.CFrame = hrp.CFrame * CFrame.new(0, 0, -dashDistance)
         end
     end
     
@@ -308,7 +347,20 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
     end
 end)
 
+local mobileDragging = false
+local mobileDragStart = Vector3.new()
+local mobileStartPos = UDim2.new()
+
 mobileButton.InputBegan:Connect(function(input)
+    if dragMobileButton and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+        mobileDragging = true
+        mobileDragStart = input.Position
+        mobileStartPos = mobileButton.Position
+        return
+    end
+
+    if dragMobileButton then return end
+
     if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
         if aimbotMode == "Toggle" then
             isAiming = not isAiming
@@ -323,7 +375,26 @@ mobileButton.InputBegan:Connect(function(input)
     end
 end)
 
-mobileButton.InputEnded:Connect(function(input)
+UserInputService.InputChanged:Connect(function(input)
+    if dragMobileButton and mobileDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - mobileDragStart
+        mobileButton.Position = UDim2.new(
+            mobileStartPos.X.Scale,
+            mobileStartPos.X.Offset + delta.X,
+            mobileStartPos.Y.Scale,
+            mobileStartPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if mobileDragging and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+        mobileDragging = false
+        return
+    end
+
+    if dragMobileButton then return end
+
     if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
         if aimbotMode == "Hold" then
             isAiming = false
@@ -336,13 +407,39 @@ end)
 RunService.RenderStepped:Connect(function()
     local camera = workspace.CurrentCamera
     
+    if crosshairEnabled then
+        local center = camera.ViewportSize / 2
+        
+        for _, line in pairs(crosshairLines) do
+            line.Visible = true
+            line.Color = crosshairColor
+            line.Thickness = crosshairThickness
+        end
+        
+        crosshairLines.Top.From = Vector2.new(center.X, center.Y - 2)
+        crosshairLines.Top.To = Vector2.new(center.X, center.Y - crosshairSize)
+        
+        crosshairLines.Bottom.From = Vector2.new(center.X, center.Y + 2)
+        crosshairLines.Bottom.To = Vector2.new(center.X, center.Y + crosshairSize)
+        
+        crosshairLines.Left.From = Vector2.new(center.X - 2, center.Y)
+        crosshairLines.Left.To = Vector2.new(center.X - crosshairSize, center.Y)
+        
+        crosshairLines.Right.From = Vector2.new(center.X + 2, center.Y)
+        crosshairLines.Right.To = Vector2.new(center.X + crosshairSize, center.Y)
+    else
+        for _, line in pairs(crosshairLines) do
+            line.Visible = false
+        end
+    end
+    
     if showFovCircle and aimbotEnabled then
         fovCircle.Visible = true
         fovCircle.Radius = fovRadius
         fovCircle.Color = fovColor
         
-        if fovFollowTarget and aimbotTarget and aimbotTarget.Character and aimbotTarget.Character:FindFirstChild("HumanoidRootPart") then
-            local pos, onScreen = camera:WorldToViewportPoint(aimbotTarget.Character.HumanoidRootPart.Position)
+        if fovFollowTarget and aimbotTarget and aimbotTarget.Character and aimbotTarget.Character:FindFirstChild(aimbotTargetPart) then
+            local pos, onScreen = camera:WorldToViewportPoint(aimbotTarget.Character[aimbotTargetPart].Position)
             if onScreen then
                 fovCircle.Position = Vector2.new(pos.X, pos.Y)
             else
@@ -360,27 +457,32 @@ RunService.RenderStepped:Connect(function()
     end
 
     if aimbotEnabled and isAiming then
-        if aimbotSticky and aimbotTarget and aimbotTarget.Character and aimbotTarget.Character:FindFirstChild("HumanoidRootPart") and aimbotTarget.Character:FindFirstChildOfClass("Humanoid") and aimbotTarget.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
+        if aimbotSticky and aimbotTarget and aimbotTarget.Character and aimbotTarget.Character:FindFirstChild(aimbotTargetPart) and aimbotTarget.Character:FindFirstChildOfClass("Humanoid") and aimbotTarget.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
         else
             aimbotTarget = getClosestTarget()
         end
         
-        if aimbotTarget and aimbotTarget.Character and aimbotTarget.Character:FindFirstChild("HumanoidRootPart") then
-            local targetPos = aimbotTarget.Character.HumanoidRootPart.Position
-            if aimbotMethod == "Camera" then
-                camera.CFrame = CFrame.new(camera.CFrame.Position, targetPos)
-            elseif aimbotMethod == "Mouse" then
-                local pos, onScreen = camera:WorldToViewportPoint(targetPos)
-                if onScreen then
-                    local mousePos = UserInputService:GetMouseLocation()
-                    if mousemoverel then
-                        mousemoverel(pos.X - mousePos.X, pos.Y - mousePos.Y)
+        if aimbotTarget and aimbotTarget.Character then
+            local targetPart = aimbotTarget.Character:FindFirstChild(aimbotTargetPart) or aimbotTarget.Character:FindFirstChild("HumanoidRootPart")
+            if targetPart then
+                local targetPos = targetPart.Position
+                if aimbotMethod == "Camera" then
+                    camera.CFrame = CFrame.new(camera.CFrame.Position, targetPos)
+                elseif aimbotMethod == "Mouse" then
+                    local pos, onScreen = camera:WorldToViewportPoint(targetPos)
+                    if onScreen then
+                        local mousePos = UserInputService:GetMouseLocation()
+                        if mousemoverel then
+                            mousemoverel(pos.X - mousePos.X, pos.Y - mousePos.Y)
+                        end
                     end
                 end
-            end
-            
-            if highlightTarget then
-                targetHighlight.Parent = aimbotTarget.Character
+                
+                if highlightTarget then
+                    targetHighlight.Parent = aimbotTarget.Character
+                else
+                    targetHighlight.Parent = nil
+                end
             else
                 targetHighlight.Parent = nil
             end
@@ -437,6 +539,7 @@ RunService.RenderStepped:Connect(function()
                     local finalNameColor = nameColor
                     local finalDisplayNameColor = displayNameColor
                     local finalDistanceColor = distanceColor
+                    local finalTracerColor = tracerColor
 
                     if teamColorEnabled and player.Team and player.TeamColor then
                         local teamColorHex = player.TeamColor.Color
@@ -444,6 +547,7 @@ RunService.RenderStepped:Connect(function()
                         finalNameColor = teamColorHex
                         finalDisplayNameColor = teamColorHex
                         finalDistanceColor = teamColorHex
+                        finalTracerColor = teamColorHex
                     end
                     
                     if drawingBoxEnabled then
@@ -529,6 +633,21 @@ RunService.RenderStepped:Connect(function()
                     else
                         structures.Distance.Visible = false
                     end
+
+                    if drawingTracersEnabled then
+                        structures.Tracer.Visible = true
+                        if tracerOrigin == "Bottom" then
+                            structures.Tracer.From = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y)
+                        elseif tracerOrigin == "Center" then
+                            structures.Tracer.From = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+                        else
+                            structures.Tracer.From = UserInputService:GetMouseLocation()
+                        end
+                        structures.Tracer.To = Vector2.new(pos.X, pos.Y)
+                        structures.Tracer.Color = finalTracerColor
+                    else
+                        structures.Tracer.Visible = false
+                    end
                 end
             end
         end
@@ -542,6 +661,7 @@ RunService.RenderStepped:Connect(function()
             structures.Name.Visible = false
             structures.DisplayName.Visible = false
             structures.Distance.Visible = false
+            structures.Tracer.Visible = false
         end
     end
 end)
@@ -562,6 +682,63 @@ RunService.Heartbeat:Connect(function(dt)
         if noJumpCooldown then
             humanoid.JumpPower = jumpPowerEnabled and jumpPowerValue or originalJumpPower
         end
+    end
+    
+    if autoClickerEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+        if mouse1click then
+            mouse1click()
+        else
+            VirtualUser:ClickButton1(Vector2.new(0, 0))
+        end
+    end
+
+    if triggerbotEnabled then
+        local mouse = LocalPlayer:GetMouse()
+        local target = mouse.Target
+        if target and target.Parent then
+            local char = target.Parent
+            if char:IsA("Accessory") then char = char.Parent end
+            local player = Players:GetPlayerFromCharacter(char)
+            if player and player ~= LocalPlayer then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local passCheck = true
+                    if triggerbotTeamCheck and player.Team == LocalPlayer.Team then passCheck = false end
+                    local isFriend = false
+                    pcall(function() isFriend = LocalPlayer:IsFriendsWith(player.UserId) end)
+                    if triggerbotFriendCheck and isFriend then passCheck = false end
+                    
+                    if passCheck then
+                        if mouse1click then
+                            mouse1click()
+                        else
+                            VirtualUser:ClickButton1(Vector2.new(0, 0))
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if antiAimEnabled and hrp and humanoid and humanoid.Health > 0 then
+        if antiAimMode == "Backwards" then
+            local lookAt = camera.CFrame.LookVector
+            local flatLook = Vector3.new(lookAt.X, 0, lookAt.Z).Unit
+            hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position - flatLook)
+        elseif antiAimMode == "Jitter" then
+            local lookAt = camera.CFrame.LookVector
+            local flatLook = Vector3.new(lookAt.X, 0, lookAt.Z).Unit
+            local jitterAngle = math.random() > 0.5 and math.rad(90) or math.rad(-90)
+            hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + flatLook) * CFrame.Angles(0, jitterAngle, 0)
+        elseif antiAimMode == "Spin" then
+            hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(30), 0)
+        end
+    end
+
+    if thirdPersonEnabled then
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        LocalPlayer.CameraMinZoomDistance = thirdPersonDistance
+        LocalPlayer.CameraMaxZoomDistance = thirdPersonDistance
     end
 
     if flyEnabled and hrp and humanoid then
@@ -686,12 +863,6 @@ RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    if gravityEnabled then
-        workspace.Gravity = gravityValue
-    else
-        workspace.Gravity = 196.2
-    end
-
     if fovEnabled and camera then
         camera.FieldOfView = fovValue
     elseif camera then
@@ -732,6 +903,24 @@ RunService.Heartbeat:Connect(function(dt)
                         part.Massless = true
                     end
                     part.CanCollide = false
+                end
+            end
+
+            if chamsEnabled and passCheck and hum and hum.Health > 0 then
+                local highlight = char:FindFirstChild("LawChams")
+                if not highlight then
+                    highlight = Instance.new("Highlight")
+                    highlight.Name = "LawChams"
+                    highlight.Parent = char
+                end
+                highlight.FillColor = chamsFillColor
+                highlight.OutlineColor = chamsOutlineColor
+                highlight.FillTransparency = 0.5
+                highlight.OutlineTransparency = 0
+            else
+                local highlight = char:FindFirstChild("LawChams")
+                if highlight then
+                    highlight:Destroy()
                 end
             end
         end
@@ -798,6 +987,7 @@ AimbotSection:AddKeybind("Aimbot Keybind", Enum.KeyCode.E, function(key)
     aimbotKeybind = key
     aimbotKeyType = "Keyboard"
 end)
+AimbotSection:AddDropdown("Target Part", {"Head", "Torso", "HumanoidRootPart"}, function(v) aimbotTargetPart = v end)
 AimbotSection:AddDropdown("Aimbot Method", {"Camera", "Mouse"}, function(v) aimbotMethod = v end)
 AimbotSection:AddDropdown("Aimbot Mode", {"Hold", "Toggle"}, function(v) aimbotMode = v end)
 AimbotSection:AddToggle("Sticky Aim", false, function(v) aimbotSticky = v end)
@@ -805,10 +995,21 @@ AimbotSection:AddToggle("Wall Check", false, function(v) wallCheckEnabled = v en
 AimbotSection:AddToggle("Team Check", false, function(v) aimbotTeamCheck = v end)
 AimbotSection:AddToggle("Friend Check", false, function(v) aimbotFriendCheck = v end)
 AimbotSection:AddToggle("Mobile Support Button", false, function(v) mobileGui.Enabled = v end)
+AimbotSection:AddToggle("Drag Mobile Button", false, function(v) dragMobileButton = v end)
+
+local TriggerbotSection = CombatTab:AddSection("Trigger & Clicking", "right")
+TriggerbotSection:AddToggle("Enable Triggerbot", false, function(v) triggerbotEnabled = v end)
+TriggerbotSection:AddToggle("Auto Clicker", false, function(v) autoClickerEnabled = v end)
+TriggerbotSection:AddToggle("Team Check (Trigger)", false, function(v) triggerbotTeamCheck = v end)
+TriggerbotSection:AddToggle("Friend Check (Trigger)", false, function(v) triggerbotFriendCheck = v end)
+
+local AntiAimSection = CombatTab:AddSection("Anti Aim", "right")
+AntiAimSection:AddToggle("Enable Anti Aim", false, function(v) antiAimEnabled = v end)
+AntiAimSection:AddDropdown("Anti Aim Mode", {"Backwards", "Jitter", "Spin"}, function(v) antiAimMode = v end)
 
 local HitboxSection = CombatTab:AddSection("Hitbox Expander", "left")
 HitboxSection:AddToggle("Enable Hitbox", false, function(v) hitboxEnabled = v end)
-HitboxSection:AddDropdown("Target Part", {"Head", "HumanoidRootPart", "Torso"}, function(v) hitboxPart = v end)
+HitboxSection:AddDropdown("Target Part (Hitbox)", {"Head", "HumanoidRootPart", "Torso"}, function(v) hitboxPart = v end)
 HitboxSection:AddSlider("Hitbox Size", 2, 50, 2, function(v) hitboxSize = v end)
 HitboxSection:AddDropdown("Hitbox Material", {"Neon", "ForceField", "SmoothPlastic", "Glass"}, function(v) hitboxMaterial = v end)
 HitboxSection:AddSlider("Transparency", 0, 100, 50, function(v) hitboxTransparency = v / 100 end)
@@ -836,12 +1037,15 @@ SpeedSection:AddToggle("WalkSpeed", false, function(v) walkSpeedEnabled = v end)
 SpeedSection:AddDropdown("Speed Method", {"WalkSpeed", "CFrame"}, function(v) speedMethod = v end)
 SpeedSection:AddSlider("Speed Value", 1, 250, 16, function(v) walkSpeedValue = v end)
 
-local JumpSection = MovementTab:AddSection("Jump Config", "left")
+local JumpSection = MovementTab:AddSection("Jump & Dash", "left")
 JumpSection:AddToggle("JumpPower", false, function(v) jumpPowerEnabled = v end)
 JumpSection:AddSlider("Jump Value", 50, 500, 50, function(v) jumpPowerValue = v end)
 JumpSection:AddToggle("Infinite Jump", false, function(v) infiniteJumpEnabled = v end)
 JumpSection:AddToggle("Bhop", false, function(v) bhopEnabled = v end)
 JumpSection:AddToggle("No Jump Cooldown", false, function(v) noJumpCooldown = v end)
+JumpSection:AddToggle("Enable Dash", false, function(v) dashEnabled = v end)
+JumpSection:AddKeybind("Dash Keybind", Enum.KeyCode.X, function(key) dashKeybind = key end)
+JumpSection:AddSlider("Dash Distance", 5, 100, 20, function(v) dashDistance = v end)
 
 Window:AddTabLabel("Visuals")
 local VisualsTab = Window:AddTab("Visuals", "image")
@@ -863,11 +1067,16 @@ EspSection:AddToggle("Health Bar", false, function(v) drawingHealthBarEnabled = 
 EspSection:AddToggleColorpicker("Name Text", false, Color3.fromRGB(255, 255, 255), function(v) drawingNameEnabled = v end, function(c) nameColor = c end)
 EspSection:AddToggleColorpicker("Display Name", false, Color3.fromRGB(255, 255, 255), function(v) drawingDisplayNameEnabled = v end, function(c) displayNameColor = c end)
 EspSection:AddToggleColorpicker("Distance Value", false, Color3.fromRGB(255, 255, 255), function(v) drawingDistanceEnabled = v end, function(c) distanceColor = c end)
+EspSection:AddToggleColorpicker("Tracers ESP", false, Color3.fromRGB(255, 255, 255), function(v) drawingTracersEnabled = v end, function(c) tracerColor = c end)
+EspSection:AddDropdown("Tracer Origin", {"Bottom", "Center", "Mouse"}, function(v) tracerOrigin = v end)
+EspSection:AddToggle("Chams ESP", false, function(v) chamsEnabled = v end)
 EspSection:AddToggle("Team Filter", false, function(v) teamCheckEnabled = v end)
 EspSection:AddToggle("Use Team Color", false, function(v) teamColorEnabled = v end)
 EspSection:AddToggle("Friend Filter", false, function(v) friendCheckEnabled = v end)
 
-local WorldSection = VisualsTab:AddSection("Environment", "right")
+local WorldSection = VisualsTab:AddSection("Environment & HUD", "right")
+WorldSection:AddToggleColorpicker("Custom Crosshair", false, Color3.fromRGB(255, 255, 255), function(v) crosshairEnabled = v end, function(c) crosshairColor = c end)
+WorldSection:AddSlider("Crosshair Size", 2, 30, 10, function(v) crosshairSize = v end)
 WorldSection:AddToggle("Fullbright", false, function(v)
     fullbrightEnabled = v
     if v then
@@ -888,8 +1097,26 @@ WorldSection:AddToggle("No Fog", false, function(v)
         Lighting.FogEnd = originalFogEnd
     end
 end)
-WorldSection:AddToggle("FOV", false, function(v) fovEnabled = v end)
+WorldSection:AddToggle("FOV Modifier", false, function(v) fovEnabled = v end)
 WorldSection:AddSlider("FOV Value", 70, 150, 70, function(v) fovValue = v end)
+WorldSection:AddToggle("Third Person", false, function(v)
+    thirdPersonEnabled = v
+    if v then
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        LocalPlayer.CameraMinZoomDistance = thirdPersonDistance
+        LocalPlayer.CameraMaxZoomDistance = thirdPersonDistance
+    else
+        LocalPlayer.CameraMinZoomDistance = 0.5
+        LocalPlayer.CameraMaxZoomDistance = 128
+    end
+end)
+WorldSection:AddSlider("Third Person Distance", 5, 100, 15, function(v)
+    thirdPersonDistance = v
+    if thirdPersonEnabled then
+        LocalPlayer.CameraMinZoomDistance = thirdPersonDistance
+        LocalPlayer.CameraMaxZoomDistance = thirdPersonDistance
+    end
+end)
 
 Window:AddTabLabel("Utilities")
 local UtilsTab = Window:AddTab("Utilities", "gear")
@@ -897,8 +1124,6 @@ local UtilsTab = Window:AddTab("Utilities", "gear")
 local PhysicsSection = UtilsTab:AddSection("Physics Config", "left")
 PhysicsSection:AddToggle("Noclip", false, function(v) noclipEnabled = v end)
 PhysicsSection:AddToggle("No Sit", false, function(v) noSitEnabled = v end)
-PhysicsSection:AddToggle("Gravity Hack", false, function(v) gravityEnabled = v end)
-PhysicsSection:AddSlider("Gravity Value", 0, 400, 196, function(v) gravityValue = v end)
 PhysicsSection:AddToggle("Spinbot", false, function(v) spinbotEnabled = v end)
 PhysicsSection:AddSlider("Spin Speed", 1, 100, 20, function(v) spinbotSpeed = v end)
 
